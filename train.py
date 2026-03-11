@@ -16,7 +16,6 @@ Quit:
   Q or ESC — saves the model and exits cleanly
 """
 
-
 import csv
 import os
 import sys
@@ -26,16 +25,16 @@ import pygame
 from snake_env import SnakeGame, FPS_AI, DEFAULT_GRID_SIZE
 from game import Renderer
 from agent import DQLAgent, BATCH_SIZE, GAMMA
-from model import HIDDEN_UNITS, MODEL_PATH
+from model import HIDDEN_UNITS, ONLINE_MODEL_PATH
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 GRID_SIZE = DEFAULT_GRID_SIZE  
-MAX_EPISODES = 500
+MAX_EPISODES = 10000
 TRAIN_EVERY = 1
 SAVE_EVERY = 50
 LOG_PATH = "training_log.csv"
-
+RENDER = False  # set to True to watch training
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
@@ -46,11 +45,15 @@ def train():
 
     is_new_file = not os.path.exists(LOG_PATH)
     start_episode = 1
+    record = 0
     if not is_new_file:
         with open(LOG_PATH, "r") as f:
             rows = list(csv.reader(f))
             if len(rows) > 1:
                 start_episode = int(rows[-1][0]) + 1
+                record = max(int(row[2]) for row in rows[1:])
+
+    game.record = record
 
     log_file = open(LOG_PATH, "a", newline="")
     logger = csv.writer(log_file)
@@ -66,9 +69,15 @@ def train():
     print(f"  Episodes : {MAX_EPISODES}   Batch : {BATCH_SIZE}")
     print(f"  Memory : 100,000   γ : {GAMMA}")
     print(f"  Network : 11 → {HIDDEN_UNITS} → {HIDDEN_UNITS} → 3")
+    print(f"  Rendering : {'on' if RENDER else 'off'}")
     print(f"{'='*52}\n")
+    if not RENDER:
+        print("Training...".center(52))
 
-    for episode in range(start_episode, start_episode + MAX_EPISODES):
+    if not RENDER:
+        renderer.draw_training_screen()
+
+    for episode in range(start_episode, MAX_EPISODES + 1):
         state = game.reset()
         done = False
 
@@ -85,7 +94,8 @@ def train():
             next_state, reward, done = game.step(action)
             agent.remember(state, action, reward, next_state, done)
             state = next_state
-            renderer.draw()
+            if RENDER:
+                renderer.draw()
 
         # ── Episode over — now learn and log ──────────────────────────────
         scores.append(game.score)
@@ -116,7 +126,7 @@ def train():
 
     agent.save()
     log_file.close()
-    print(f"\nTraining complete — model saved to {MODEL_PATH}")
+    print(f"\nTraining complete — model saved to {ONLINE_MODEL_PATH}")
     pygame.quit()
 
 
