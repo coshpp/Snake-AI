@@ -18,7 +18,7 @@ import numpy as np
 
 DEFAULT_GRID_SIZE = 20
 FPS_HUMAN = 10
-FPS_AI = 120
+FPS_AI = 1000000
 
 # ── Direction ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@ class SnakeGame:
             return self.get_state(), -10, True
 
         if head == self.food:
+            self.steps = 0
             self.score += 1
             if self.score > self.record:
                 self.record = self.score
