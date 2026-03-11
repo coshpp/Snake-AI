@@ -14,20 +14,22 @@ import sys
 import numpy as np
 import pygame
 
-from snake_env import SnakeGame, FPS_AI, DEFAULT_GRID_SIZE
+from snake_env import SnakeGame, DEFAULT_GRID_SIZE
 from game import Renderer
-from model import load_model, MODEL_PATH, ACTION_SIZE
+from model import load_model, ONLINE_MODEL_PATH, ACTION_SIZE
 
+SPEEDS = [10, 30, 60, 120, 1_000_000]
 
-def play_ai(grid_size: int = DEFAULT_GRID_SIZE, speed: int = FPS_AI):
-    model = load_model(MODEL_PATH)
+def play_ai(grid_size: int = DEFAULT_GRID_SIZE, speed: int = 10):
+    model = load_model(ONLINE_MODEL_PATH)
     if model is None:
-        print(f"No model found at {MODEL_PATH}. Train first with: python train.py")
+        print(f"No model found at {ONLINE_MODEL_PATH}. Train first with: python3 train.py")
         sys.exit(1)
 
     game = SnakeGame(grid_size=grid_size, human=False, speed=speed)
     renderer = Renderer(game)
     state = game.reset()
+    speed_idx = 0
 
     while True:
         for event in pygame.event.get():
@@ -38,6 +40,12 @@ def play_ai(grid_size: int = DEFAULT_GRID_SIZE, speed: int = FPS_AI):
                     pygame.quit(); sys.exit()
                 if event.key == pygame.K_r:
                     state = game.reset()
+                if event.key == pygame.K_UP:
+                    speed_idx = (speed_idx + 1) % len(SPEEDS)
+                    game.speed = SPEEDS[speed_idx]
+                if event.key == pygame.K_DOWN:
+                    speed_idx = (speed_idx - 1) % len(SPEEDS)
+                    game.speed = SPEEDS[speed_idx]
 
         q_values = model(state[np.newaxis], training=False).numpy()[0]
         action = int(np.argmax(q_values))
