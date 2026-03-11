@@ -19,7 +19,8 @@ STATE_SIZE = 11
 ACTION_SIZE = 3     
 HIDDEN_UNITS = 256  
 LEARNING_RATE = 0.001  
-MODEL_PATH = "snake_model.keras"  
+ONLINE_MODEL_PATH = "snake_online_model.keras"
+TARGET_ONLINE_MODEL_PATH = "snake_target_model.keras"
 
 
 def build_model() -> Sequential:
@@ -28,11 +29,11 @@ def build_model() -> Sequential:
         Dense(HIDDEN_UNITS, activation="relu"),
         Dense(ACTION_SIZE, activation="linear"),
     ])
-    model.compile(optimizer=Adam(learning_rate=LEARNING_RATE), loss="mse")
+    model.compile(optimizer=Adam(learning_rate=LEARNING_RATE), loss="Huber")
     return model
 
 
-def load_model(path: str = MODEL_PATH) -> Sequential:
+def load_model(path: str = ONLINE_MODEL_PATH) -> Sequential:
     if not os.path.exists(path):
         return None
     try:
@@ -44,5 +45,5 @@ def load_model(path: str = MODEL_PATH) -> Sequential:
         return None
 
 
-def save_model(model: Sequential, path: str = MODEL_PATH):
+def save_model(model: Sequential, path: str = ONLINE_MODEL_PATH):
     model.save(path)
