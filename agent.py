@@ -13,7 +13,7 @@ The agent does two things:
   2. Learn — after each episode, look back at past experience and
      improve the network's Q-value predictions.
      Samples a random batch from memory and trains using:
-       Q_target = reward + γ × max(Q(next_state))
+       Q_target = reward + γ × Q_target(next_state, argmax(Q_online(next_state)))
 """
 
 import random
@@ -30,7 +30,7 @@ BATCH_SIZE = 128      # how many to sample per learning step
 GAMMA = 0.9            # discount factor — how much to value future rewards
 EPSILON_START = 1.0    # start fully random
 EPSILON_MIN = 0.01     # never go below 1% random
-EPSILON_DECAY = 0.9991  # multiply epsilon by this after each episode
+EPSILON_DECAY = 0.9997  # multiply epsilon by this after each episode
 
 
 # ── Replay Buffer ─────────────────────────────────────────────────────────────
@@ -73,13 +73,13 @@ class DQLAgent:
         self.memory = ReplayBuffer(MEMORY_SIZE)
         self.epsilon = EPSILON_START
 
-        self.steps = 0
+        self.grad_updates = 0
 
         # Resume from a saved model if one exists
         saved = load_model(ONLINE_MODEL_PATH)
         if saved is not None:
             self.online_model = saved
-            self.epsilon = 0.1
+            self.epsilon = EPSILON_MIN
         else:
             self.online_model = build_model()
 
@@ -133,8 +133,8 @@ class DQLAgent:
             epochs=1, verbose=0,
         )
 
-        self.steps += 1
-        if self.steps % 100 == 0:
+        self.grad_updates += 1
+        if self.grad_updates % 100 == 0:
             self.target_model.set_weights(self.online_model.get_weights())
 
         return float(history.history["loss"][0])

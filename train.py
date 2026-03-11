@@ -4,7 +4,7 @@ train.py — Runs the training loop.
 Each episode:
   1. Reset the game
   2. Loop until the snake dies or starves:
-       - Get the current state (11 numbers)
+       - Get the current state (20 numbers)
        - Agent picks an action (random or best known)
        - Step the game — get next state, reward, done
        - Store the transition in memory
@@ -24,13 +24,13 @@ import pygame
 
 from snake_env import SnakeGame, FPS_AI, DEFAULT_GRID_SIZE
 from game import Renderer
-from agent import DQLAgent, BATCH_SIZE, GAMMA
-from model import HIDDEN_UNITS, ONLINE_MODEL_PATH
+from agent import DQLAgent, BATCH_SIZE, GAMMA, EPSILON_MIN
+from model import HIDDEN_UNITS, ONLINE_MODEL_PATH, STATE_SIZE
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 GRID_SIZE = DEFAULT_GRID_SIZE  
-MAX_EPISODES = 10000
+MAX_EPISODES = 20000
 TRAIN_EVERY = 1
 SAVE_EVERY = 50
 LOG_PATH = "training_log.csv"
@@ -41,7 +41,6 @@ RENDER = False  # set to True to watch training
 def train():
     game = SnakeGame(grid_size=GRID_SIZE, human=False, speed=FPS_AI)
     renderer = Renderer(game)
-    agent = DQLAgent()
 
     is_new_file = not os.path.exists(LOG_PATH)
     start_episode = 1
@@ -60,6 +59,8 @@ def train():
     if is_new_file:
         logger.writerow(["episode", "score", "record", "steps", "epsilon", "loss", "memory"])
 
+    agent = DQLAgent()
+
     scores = []
     last_loss = 0.0
 
@@ -68,7 +69,7 @@ def train():
     print(f"  Grid : {GRID_SIZE}×{GRID_SIZE}   Starting episode : {start_episode}")
     print(f"  Episodes : {MAX_EPISODES}   Batch : {BATCH_SIZE}")
     print(f"  Memory : 100,000   γ : {GAMMA}")
-    print(f"  Network : 11 → {HIDDEN_UNITS} → {HIDDEN_UNITS} → 3")
+    print(f"  Network : {STATE_SIZE} → {HIDDEN_UNITS} → {HIDDEN_UNITS} → 3")
     print(f"  Rendering : {'on' if RENDER else 'off'}")
     print(f"{'='*52}\n")
     if not RENDER:
@@ -120,6 +121,7 @@ def train():
             f"EP {episode:>4} | "
             f"Score {game.score:>3} | "
             f"Record {game.record:>3} | "
+            f"Steps {game.steps:>4} | "
             f"ε {agent.epsilon:.3f} | "
             f"Loss {last_loss:.4f}"
         )

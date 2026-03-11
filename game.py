@@ -74,6 +74,13 @@ class Renderer:
         pygame.display.flip()
         self.clock.tick(self.game.speed)
 
+    def draw_training_screen(self):
+        self.screen.fill(C_BG)
+        cx, cy = self.width // 2, self.height // 2
+        text = self.font_sm.render("Training...", True, C_TEXT)
+        self.screen.blit(text, (cx - text.get_width() // 2, cy - text.get_height() // 2))
+        pygame.display.flip()
+
     def _draw_header(self):
         s = self.game
         pygame.draw.rect(self.screen, C_PANEL_BG, (0, 0, self.width, self.header_h))
