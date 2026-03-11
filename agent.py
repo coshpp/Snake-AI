@@ -21,16 +21,16 @@ from collections import deque
 
 import numpy as np
 
-from model import build_model, load_model, save_model, ACTION_SIZE, MODEL_PATH
+from model import build_model, load_model, save_model, ACTION_SIZE, ONLINE_MODEL_PATH, TARGET_ONLINE_MODEL_PATH
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 MEMORY_SIZE = 100_000  # how many past transitions to remember
-BATCH_SIZE = 1000      # how many to sample per learning step
+BATCH_SIZE = 128      # how many to sample per learning step
 GAMMA = 0.9            # discount factor — how much to value future rewards
 EPSILON_START = 1.0    # start fully random
 EPSILON_MIN = 0.01     # never go below 1% random
-EPSILON_DECAY = 0.995  # multiply epsilon by this after each episode
+EPSILON_DECAY = 0.9991  # multiply epsilon by this after each episode
 
 
 # ── Replay Buffer ─────────────────────────────────────────────────────────────
@@ -73,13 +73,19 @@ class DQLAgent:
         self.memory = ReplayBuffer(MEMORY_SIZE)
         self.epsilon = EPSILON_START
 
+        self.steps = 0
+
         # Resume from a saved model if one exists
-        saved = load_model(MODEL_PATH)
+        saved = load_model(ONLINE_MODEL_PATH)
         if saved is not None:
-            self.model = saved
-            self.epsilon = EPSILON_MIN  # skip exploration if resuming
+            self.online_model = saved
+            self.epsilon = 0.1
         else:
-            self.model = build_model()
+            self.online_model = build_model()
+
+        saved_target = load_model(TARGET_ONLINE_MODEL_PATH)
+        self.target_model = saved_target if saved_target is not None else build_model()
+        self.target_model.set_weights(self.online_model.get_weights())
 
     def act(self, state: np.ndarray) -> int:
         """
@@ -88,7 +94,7 @@ class DQLAgent:
         """
         if random.random() < self.epsilon:
             return random.randint(0, ACTION_SIZE - 1)  # explore
-        q_values = self.model(state[np.newaxis], training=False).numpy()[0]
+        q_values = self.online_model(state[np.newaxis], training=False).numpy()[0]
         return int(np.argmax(q_values))  # exploit — pick highest Q-value
 
     def remember(self, state, action, reward, next_state, done):
@@ -114,20 +120,28 @@ class DQLAgent:
             return 0.0
 
         states, actions, rewards, next_states, dones = self.memory.sample(BATCH_SIZE)
-        next_q = self.model(next_states, training=False).numpy()
-        targets = rewards + GAMMA * np.max(next_q, axis=1) * (1 - dones)
-        q_values = self.model(states, training=False).numpy()
-        q_values[np.arange(BATCH_SIZE), actions] = targets
+        best_actions = np.argmax(self.online_model(next_states, training=False).numpy(), axis=1)
+        next_q = self.target_model(next_states, training=False).numpy()
+        targets = rewards + GAMMA * next_q[np.arange(BATCH_SIZE), best_actions] * (1 - dones)
+        predicted_q_values = self.online_model(states, training=False).numpy()
+        target_q_values = predicted_q_values.copy()
+        target_q_values[np.arange(BATCH_SIZE), actions] = targets
 
-        history = self.model.fit(
-            states, q_values,
+        history = self.online_model.fit(
+            states, target_q_values,
             batch_size=BATCH_SIZE,
             epochs=1, verbose=0,
         )
+
+        self.steps += 1
+        if self.steps % 100 == 0:
+            self.target_model.set_weights(self.online_model.get_weights())
+
         return float(history.history["loss"][0])
 
     def decay_epsilon(self):
         self.epsilon = max(EPSILON_MIN, self.epsilon * EPSILON_DECAY)
 
-    def save(self, path: str = MODEL_PATH):
-        save_model(self.model, path)
+    def save(self, path: str = ONLINE_MODEL_PATH):
+        save_model(self.online_model, path)
+        save_model(self.target_model, TARGET_ONLINE_MODEL_PATH)
