@@ -25,12 +25,13 @@ from model import build_model, load_model, save_model, ACTION_SIZE, ONLINE_MODEL
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-MEMORY_SIZE = 100_000  # how many past transitions to remember
-BATCH_SIZE = 128      # how many to sample per learning step
-GAMMA = 0.9            # discount factor — how much to value future rewards
-EPSILON_START = 1.0    # start fully random
-EPSILON_MIN = 0.01     # never go below 1% random
-EPSILON_DECAY = 0.9997  # multiply epsilon by this after each episode
+MEMORY_SIZE = 100_000     # how many past transitions to remember
+BATCH_SIZE = 128          # how many to sample per learning step
+GAMMA = 0.9               # discount factor — how much to value future rewards
+LEARN_EVERY = 4           # train once every N game steps
+EPSILON_START = 1.0       # start fully random
+EPSILON_MIN = 0.01        # never go below 1% random
+EPSILON_DECAY = 0.99999   # multiply epsilon by this after each episode
 
 
 # ── Replay Buffer ─────────────────────────────────────────────────────────────
@@ -74,6 +75,7 @@ class DQLAgent:
         self.epsilon = EPSILON_START
 
         self.grad_updates = 0
+        self.step_count = 0
 
         # Resume from a saved model if one exists
         saved = load_model(ONLINE_MODEL_PATH)
@@ -100,6 +102,22 @@ class DQLAgent:
     def remember(self, state, action, reward, next_state, done):
         """Save a transition to memory."""
         self.memory.push(state, action, reward, next_state, done)
+
+    def step(self, state, action, reward, next_state, done) -> float:
+        """
+        Called every game step. Stores the transition, decays epsilon,
+        and every LEARN_EVERY steps runs a training batch.
+
+        Returns the loss (0.0 if no training happened this step).
+        """
+        self.remember(state, action, reward, next_state, done)
+        self.step_count += 1
+        self.decay_epsilon()
+
+        if self.step_count % LEARN_EVERY != 0:
+            return 0.0
+
+        return self.learn()
 
     def learn(self) -> float:
         """

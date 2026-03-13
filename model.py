@@ -2,7 +2,7 @@
 model.py — The neural network 
 
 Architecture:
-  20 inputs → 256 neurons → 256 neurons → 3 outputs
+  23 inputs → 256 neurons → 256 neurons → 3 outputs
 """
 
 import os
@@ -15,7 +15,7 @@ from tensorflow.keras.optimizers import Adam
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-STATE_SIZE = 20
+STATE_SIZE = 23
 ACTION_SIZE = 3     
 HIDDEN_UNITS = 256  
 LEARNING_RATE = 0.001  
