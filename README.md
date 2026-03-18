@@ -51,10 +51,9 @@ Trained with Huber loss and Adam optimizer. A `@tf.function`-compiled training s
 | γ (discount) | 0.99 | High discount so the agent values long-term survival. |
 | Batch size | 128 | Balances stable gradients with fast update speeds. |
 | Replay buffer | 100,000 | Stores diverse past transitions so the agent doesn't just learn from recent games. |
-| Learn every | 4 steps | Executes a backward pass on a sampled batch every 4 steps. |
+| Learn every | 4 steps | Skips redundant consecutive frames. Saves computing time without losing useful gradient data. |
 | Target sync | Every 500 updates | Keeps the target network stable to prevent Q-value oscillation. Frequent enough to track improvement. |
-| ε decay | 0.99999 per step | Slow decay gives ~460k steps of exploration before settling into exploitation. |
-
+| Exploration (ε) | 1.0 → 0.01<br>*(decay 0.99999/step)* | Takes ~460,000 steps to decay from pure exploration (1.0) to pure exploitation (0.01). |
 
 ## Project Structure
 
