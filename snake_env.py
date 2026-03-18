@@ -1,11 +1,10 @@
 """
 snake_env.py — Snake game logic and environment.
 
-This is the game logic itself with no visuals
-The agent interacts with it like this every step:
-  1. get_state() — what does the snake currently see?
-  2. step(action) — move the snake, get back a reward and whether it died
-  3. reset() - start a new game
+The agent interacts with the game like this every step:
+  1. get_state() — observe what the snake currently sees (24 floats)
+  2. step(action) — move the snake, get back (state, reward, done)
+  3. reset()     — start a new game
 """
 
 import random
@@ -28,7 +27,7 @@ class Dir(Enum):
     UP = (0, -1)
     DOWN = (0, 1)
 
-# Directions listed clockwise 
+# Directions listed clockwise
 CW = [Dir.RIGHT, Dir.DOWN, Dir.LEFT, Dir.UP]
 
 # ── Snake Game ────────────────────────────────────────────────────────────────
@@ -37,41 +36,51 @@ class SnakeGame:
     """
     The Snake environment.
 
-    The agent sees 20 values as its state:
-    [0-15]  ray signals (8 relative rays × 2 values: wall distance, body distance)
-            rays are relative to heading: forward, forward-right, right, backward-right,
-            backward, backward-left, left, forward-left
-    [16-17] food vector (food_forward, food_right) normalized by grid size
-    [18-19] tail vector (tail_forward, tail_right) normalized by grid size
-    [20-22] available space for next move
+    State (24 floats):
+      [0-15]  8 rays × 2 signals each (wall distance, body distance)
+      [16-17] food direction (forward, right) relative to heading
+      [18-20] reachable space per action (straight, right, left)
+      [21-23] tail reachable per action (1 = yes, 0 = no)
+
+    Actions: 0 = straight, 1 = turn right, 2 = turn left
+
+    Rewards:
+      +10   eat food
+      -10   die (collision or starvation)
+      -0.01 + fading proximity shaping (off by length 50)
     """
 
     def __init__(self, grid_size: int = DEFAULT_GRID_SIZE, human: bool = True, speed: int = None):
         self.grid_size = grid_size
-        self.human = human
         self.speed = speed or (FPS_HUMAN if human else FPS_AI)
         self.record = 0
         self.reset()
 
+    # ── Core interface ────────────────────────────────────────────────────────
+
     def reset(self) -> np.ndarray:
-        # Place the snake in the middle of the board, facing right
+        """Start a new game. Returns the initial state."""
         cx, cy = self.grid_size // 2, self.grid_size // 2
         self.direction = Dir.RIGHT
-        self.snake = deque([
-            (cx, cy),
-            (cx - 1, cy),
-            (cx - 2, cy),
-        ])
+        self.snake = deque([(cx, cy), (cx - 1, cy), (cx - 2, cy)])
         self.snake_set = set(self.snake)
         self.score = 0
-        self.steps = 0                # total steps this episode
-        self.steps_since_food = 0     # starvation counter
-        # End the game if the snake hasn't eaten in this many steps
+        self.steps = 0
+        self.steps_since_food = 0
         self.max_steps_without_food = self.grid_size * self.grid_size * 2
         self._place_food()
         return self.get_state()
 
-    def step(self, action: int):
+    def step(self, action: int) -> tuple:
+        """
+        Move the snake one step.
+
+        Args:
+            action: 0 = straight, 1 = turn right, 2 = turn left
+
+        Returns:
+            (state, reward, done)
+        """
         self.steps += 1
         self.steps_since_food += 1
 
@@ -79,9 +88,9 @@ class SnakeGame:
         dx, dy = new_dir.value
         hx, hy = self.snake[0]
         new_head = (hx + dx, hy + dy)
-
         ate_food = (new_head == self.food)
 
+        # Death by collision
         if self._is_collision(new_head, ate_food):
             self.direction = new_dir
             return self.get_state(), -10, True
@@ -90,6 +99,7 @@ class SnakeGame:
         self.snake.appendleft(new_head)
         self.snake_set.add(new_head)
 
+        # Ate food — grow
         if ate_food:
             self.steps_since_food = 0
             self.score += 1
@@ -98,125 +108,151 @@ class SnakeGame:
             self._place_food()
             return self.get_state(), 10, False
 
-        tail = self.snake.pop()
-        self.snake_set.discard(tail)
+        # Normal move — remove tail
+        old_tail = self.snake.pop()
+        if old_tail != new_head:
+            self.snake_set.discard(old_tail)
 
+        # Death by starvation
         if self.steps_since_food >= self.max_steps_without_food:
             return self.get_state(), -10, True
 
-        prev_dist = abs(self.food[0] - hx) + abs(self.food[1] - hy)
-        curr_dist = abs(self.food[0] - new_head[0]) + abs(self.food[1] - new_head[1])
-
+        # Reward: small step cost + fading proximity shaping
         reward = -0.01
-        if curr_dist < prev_dist:
-            reward += 0.1
-        elif curr_dist > prev_dist:
-            reward -= 0.1
+        shaping_weight = max(0.0, 1.0 - len(self.snake) / 50.0)
+        if shaping_weight > 0:
+            prev_dist = abs(self.food[0] - hx) + abs(self.food[1] - hy)
+            curr_dist = abs(self.food[0] - new_head[0]) + abs(self.food[1] - new_head[1])
+            if curr_dist < prev_dist:
+                reward += 0.1 * shaping_weight
+            elif curr_dist > prev_dist:
+                reward -= 0.1 * shaping_weight
 
         return self.get_state(), reward, False
 
     def get_state(self) -> np.ndarray:
+        """Build the 24-float state vector the agent sees."""
         head = self.snake[0]
-        snake_body = set(list(self.snake)[1:])
+        tail = self.snake[-1]
+        body = self.snake_set - {head}
 
-        # Raycasting 
+        # ── Rays (16 values) ──
         ray_inputs = []
         for ray_dir in self._get_ray_dirs():
-            wall_dist, body_dist = self._cast_ray(head, ray_dir, snake_body)
+            wall_dist, body_dist = self._cast_ray(head, ray_dir, body)
             ray_inputs.extend([wall_dist, body_dist])
 
-        # Food position relative to head
+        # ── Food direction (2 values) ──
         dx = self.food[0] - head[0]
         dy = self.food[1] - head[1]
-
-        fx, fy = self.direction.value      # forward direction
-        rx, ry = -fy, fx                   # right direction (90° clockwise)
-
+        fx, fy = self.direction.value       # forward
+        rx, ry = -fy, fx                    # right (90° clockwise)
         food_forward = (dx * fx + dy * fy) / self.grid_size
         food_right = (dx * rx + dy * ry) / self.grid_size
 
-        # Tail position relative to head
-        tail = self.snake[-1]
-        tdx = tail[0] - head[0]
-        tdy = tail[1] - head[1]
+        # ── Per-action BFS: reachable space + tail reachability (6 values) ──
+        blocked_no_eat = self.snake_set - {tail}    # normal move: tail will vacate
+        blocked_eat = set(self.snake_set)            # eating: tail stays
+        free_cells = self.grid_size * self.grid_size - len(self.snake)
+        bfs_cap = min(free_cells, 150)
+        skip_bfs = len(self.snake) <= 20
 
-        tail_forward = (tdx * fx + tdy * fy) / self.grid_size
-        tail_right = (tdx * rx + tdy * ry) / self.grid_size
-
-        # Reachable space — build both blocked sets once
-        blocked_no_eat = set(list(self.snake)[:-1])  # tail moves, so exclude it
-        blocked_eat = set(self.snake)                 # tail stays, so include it
-        max_visit = len(self.snake) * 3
         spaces = []
+        tail_reachable = []
 
-        for action in [0, 1, 2]:
-            next_head = self._next_head(action)
+        for a in (0, 1, 2):
+            next_head = self._next_head(a)
             ate_food = (next_head == self.food)
             blocked = blocked_eat if ate_food else blocked_no_eat
 
             if self._is_collision(next_head, ate_food):
                 spaces.append(0.0)
+                tail_reachable.append(0.0)
+            elif skip_bfs:
+                spaces.append(1.0)
+                tail_reachable.append(1.0)
             else:
-                reachable = self._reachable_space(next_head, blocked, max_visit)
-                spaces.append(reachable / max_visit)
+                count, found_tail = self._flood_fill(next_head, blocked, bfs_cap, tail)
+                spaces.append(count / max(1, free_cells))
+                tail_reachable.append(1.0 if found_tail else 0.0)
 
-        state = ray_inputs + [food_forward, food_right, tail_forward, tail_right] + spaces
-        return np.array(state, dtype=np.float32)
+        return np.array(
+            ray_inputs + [food_forward, food_right] + spaces + tail_reachable,
+            dtype=np.float32,
+        )
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # ── Movement helpers ──────────────────────────────────────────────────────
 
     def _resolve_direction(self, action: int) -> Dir:
+        """Convert a relative action (0/1/2) to an absolute direction."""
         idx = CW.index(self.direction)
         if action == 1:
-            return CW[(idx + 1) % 4]
-        elif action == 2:
-            return CW[(idx - 1) % 4]
-        return self.direction
+            return CW[(idx + 1) % 4]  # right
+        if action == 2:
+            return CW[(idx - 1) % 4]  # left
+        return self.direction          # straight
+
+    def _next_head(self, action: int) -> tuple:
+        """Where the head would end up if we took this action."""
+        d = self._resolve_direction(action)
+        dx, dy = d.value
+        hx, hy = self.snake[0]
+        return (hx + dx, hy + dy)
 
     def _is_collision(self, pos, ate_food=False) -> bool:
+        """Check if a position is a wall or body collision."""
         x, y = pos
         if x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size:
             return True
-
-        old_tail = self.snake[-1]
-
         if pos in self.snake_set:
-            return not (not ate_food and pos == old_tail)
-
+            # Tail will move out of the way — unless we just ate
+            if not ate_food and pos == self.snake[-1]:
+                return False
+            return True
         return False
 
-    def _place_food(self):
-        snake_set = set(self.snake)
+    # ── Food ──────────────────────────────────────────────────────────────────
+
+    def _place_food(self) -> None:
+        """Place food on a random empty cell."""
         while True:
             pos = (random.randint(0, self.grid_size - 1),
-                random.randint(0, self.grid_size - 1))
-            if pos not in snake_set:
+                   random.randint(0, self.grid_size - 1))
+            if pos not in self.snake_set:
                 self.food = pos
                 break
 
-    def _cast_ray(self, origin, direction, snake_body):
+    # ── Raycasting ────────────────────────────────────────────────────────────
+
+    def _cast_ray(self, origin, direction, body) -> tuple:
+        """
+        Cast a ray from origin in the given direction.
+        Returns (wall_signal, body_signal) — both are 1/distance (0 if not seen).
+        """
         dx, dy = direction
+        step_size = (dx * dx + dy * dy) ** 0.5  # 1.0 cardinal, ~1.414 diagonal
         x, y = origin
-        distance = 0
-        body_signal = 0.0  # 0 means no body seen on this ray
+        steps = 0
+        body_signal = 0.0
 
         while True:
-            distance += 1
+            steps += 1
             x += dx
             y += dy
+            dist = steps * step_size
 
             if x < 0 or y < 0 or x >= self.grid_size or y >= self.grid_size:
-                wall_signal = 1.0 / distance
-                return wall_signal, body_signal
+                return 1.0 / dist, body_signal
 
-            if body_signal == 0.0 and (x, y) in snake_body:
-                body_signal = 1.0 / distance
+            if body_signal == 0.0 and (x, y) in body:
+                body_signal = 1.0 / dist
 
-    def _get_ray_dirs(self):
+    def _get_ray_dirs(self) -> list:
+        """Return 8 ray directions relative to the snake's heading."""
         fx, fy = self.direction.value
-        rx, ry = -fy, fx      # right (clockwise)
-        lx, ly = fy, -fx      # left (counter-clockwise)
-        bx, by = -fx, -fy     # backward
+        rx, ry = -fy, fx       # right
+        lx, ly = fy, -fx       # left
+        bx, by = -fx, -fy      # backward
 
         return [
             (fx, fy),                 # forward
@@ -229,25 +265,46 @@ class SnakeGame:
             (fx + lx, fy + ly),       # forward-left
         ]
 
-    def _reachable_space(self, start, blocked, max_visit):
-        if start in blocked:
-            return 0
+    # ── Flood fill (BFS) ─────────────────────────────────────────────────────
 
+    def _flood_fill(self, start, blocked, max_count, tail) -> tuple:
+        """
+        BFS from start, avoiding blocked cells.
+
+        Space count caps at max_count for speed, but the search continues
+        past the cap until the tail is found or the region is exhausted.
+
+        Returns (count, found_tail).
+        """
+        if start in blocked:
+            return 0, False
+
+        found_tail = (start == tail)
         queue = deque([start])
         visited = {start}
+        capped_count = None
 
         while queue:
-            if len(visited) >= max_visit:
-                return max_visit
+            # Lock in the space count once we hit the cap
+            if capped_count is None and len(visited) >= max_count:
+                capped_count = max_count
+                if found_tail:
+                    return capped_count, True
 
             x, y = queue.popleft()
 
-            for dx, dy in [(1,0), (-1,0), (0,1), (0,-1)]:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
                 pos = (nx, ny)
 
                 if not (0 <= nx < self.grid_size and 0 <= ny < self.grid_size):
                     continue
+
+                # Check tail before blocked (tail may be in blocked_eat set)
+                if pos == tail:
+                    found_tail = True
+                    if capped_count is not None:
+                        return capped_count, True
 
                 if pos in blocked or pos in visited:
                     continue
@@ -255,10 +312,5 @@ class SnakeGame:
                 visited.add(pos)
                 queue.append(pos)
 
-        return len(visited)
-    
-    def _next_head(self, action):
-        new_dir = self._resolve_direction(action)
-        dx, dy = new_dir.value
-        hx, hy = self.snake[0]
-        return (hx + dx, hy + dy)
+        count = capped_count if capped_count is not None else len(visited)
+        return count, found_tail

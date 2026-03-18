@@ -4,19 +4,14 @@ play_ai.py — Watch the trained agent play without any training.
 Run:
   python3 play_ai.py           # default grid
   python3 play_ai.py <size>    # size x size grid
-
-Keybindings:
-  Q / ESC — quit
-  R — reset
-"""
- 
+""" 
 import sys
 import numpy as np
 import pygame
 
 from snake_env import SnakeGame, DEFAULT_GRID_SIZE
 from game import Renderer
-from model import load_model, ONLINE_MODEL_PATH, ACTION_SIZE
+from model import load_model, ONLINE_MODEL_PATH
 
 SPEEDS = [10, 30, 60, 120, 1_000_000]
 

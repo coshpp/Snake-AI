@@ -2,12 +2,8 @@
 game.py — Pygame renderer and human play loop.
 
 Run:
-  python3 game.py — default 20x20 grid
-  python3 game.py <size> — size x size grid 
-
-Keybindings:
-  Q / ESC — quit
-  R — reset
+  python3 game.py           — default 20×20 grid
+  python3 game.py <size>    — size × size grid
 """
 
 import sys
@@ -29,6 +25,8 @@ C_PANEL_BG = (10, 16, 22)
 
 
 class Renderer:
+    """Draws the snake game using Pygame."""
+
     def __init__(self, game: SnakeGame):
         pygame.init()
         self.game = game
@@ -36,13 +34,11 @@ class Renderer:
         self.clock = pygame.time.Clock()
         self.tick = 0
 
-        max_text_width = self.width // 5  
-        approx_chars = 10  
-        font_size = max(14, self.cell_size // 2)  
-        self.font_sm = pygame.font.SysFont("Courier New", int(font_size))
-        self.font_xs = pygame.font.SysFont("Courier New", int(font_size / 1.3))
+        font_size = max(14, self.cell_size // 2)
+        self.font = pygame.font.SysFont("Courier New", int(font_size))
 
     def _init_window(self):
+        """Set up the window, cell size, and pre-render food glow frames."""
         self.cell_size = max(5, min(30, MAX_WINDOW // self.game.grid_size))
         gs = self.game.grid_size
         cs = self.cell_size
@@ -61,10 +57,8 @@ class Renderer:
             pygame.draw.ellipse(surf, (*C_FOOD_GLOW, 60), surf.get_rect())
             self._glow_surfs.append((surf, glow_r))
 
-    def resize(self):
-        self._init_window()
-
-    def draw(self, **kwargs):
+    def draw(self):
+        """Draw one frame: header, grid, food, snake."""
         self.tick += 1
         self.screen.fill(C_BG)
         self._draw_header()
@@ -74,21 +68,14 @@ class Renderer:
         pygame.display.flip()
         self.clock.tick(self.game.speed)
 
-    def draw_training_screen(self):
-        self.screen.fill(C_BG)
-        cx, cy = self.width // 2, self.height // 2
-        text = self.font_sm.render("Training...", True, C_TEXT)
-        self.screen.blit(text, (cx - text.get_width() // 2, cy - text.get_height() // 2))
-        pygame.display.flip()
-
     def _draw_header(self):
         s = self.game
         pygame.draw.rect(self.screen, C_PANEL_BG, (0, 0, self.width, self.header_h))
         pygame.draw.line(self.screen, C_DIM, (0, self.header_h), (self.width, self.header_h), 1)
 
-        score_surf = self.font_sm.render(f"SCORE  {s.score}", True, C_TEXT)
-        record_surf = self.font_sm.render(f"RECORD  {s.record}", True, C_ACCENT)
-        size_surf = self.font_sm.render(f"{s.grid_size}×{s.grid_size}", True, C_DIM)
+        score_surf = self.font.render(f"SCORE  {s.score}", True, C_TEXT)
+        record_surf = self.font.render(f"RECORD  {s.record}", True, C_ACCENT)
+        size_surf = self.font.render(f"{s.grid_size}×{s.grid_size}", True, C_DIM)
 
         cy = self.header_h // 2
         pad = max(4, self.cell_size // 4)

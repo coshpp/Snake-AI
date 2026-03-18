@@ -1,18 +1,8 @@
 """
-agent.py — The DQL agent.
+agent.py — Double DQL agent with epsilon-greedy exploration.
 
-The agent does two things:
-
-  1. Act — decide what to do given the current state.
-     Uses epsilon-greedy: flip a coin weighted by epsilon.
-       - heads (probability ε): pick a random action  → explore
-       - tails (probability 1-ε): pick the best action → exploit
-     Epsilon starts at 1.0 (always random) and decays toward 0.01
-     (almost always picks the best known action).
-
-  2. Learn — after each episode, look back at past experience and
-     improve the network's Q-value predictions.
-     Samples a random batch from memory and trains using:
+Act:  ε-greedy — random with probability ε, best Q-value otherwise.
+Learn: sample a batch from replay memory and train with Double DQN targets:
        Q_target = reward + γ × Q_target(next_state, argmax(Q_online(next_state)))
 """
 
@@ -20,39 +10,36 @@ import random
 from collections import deque
 
 import numpy as np
+import tensorflow as tf
 
 from model import build_model, load_model, save_model, ACTION_SIZE, ONLINE_MODEL_PATH, TARGET_ONLINE_MODEL_PATH
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-MEMORY_SIZE = 100_000     # how many past transitions to remember
-BATCH_SIZE = 128          # how many to sample per learning step
-GAMMA = 0.9               # discount factor — how much to value future rewards
+MEMORY_SIZE = 100_000     # replay buffer capacity
+BATCH_SIZE = 128          # transitions per training step
+GAMMA = 0.99              # discount factor
 LEARN_EVERY = 4           # train once every N game steps
-EPSILON_START = 1.0       # start fully random
-EPSILON_MIN = 0.01        # never go below 1% random
-EPSILON_DECAY = 0.99999   # multiply epsilon by this after each episode
+SYNC_TARGET_EVERY = 500   # copy online → target every N gradient updates
+EPSILON_START = 1.0       # initial exploration rate
+EPSILON_MIN = 0.01        # minimum exploration rate
+EPSILON_DECAY = 0.99999   # per-step decay multiplier
 
 
 # ── Replay Buffer ─────────────────────────────────────────────────────────────
 
 class ReplayBuffer:
-    """
-    Stores past game transitions so the agent can learn from them later.
-
-    Each transition is one moment in the game:
-      (state, action, reward, next_state, done)
-
-    Sample randomly when learning to prevent overfitting
-    """
+    """Fixed-size ring buffer of (state, action, reward, next_state, done) transitions."""
 
     def __init__(self, capacity: int = MEMORY_SIZE):
         self.buffer = deque(maxlen=capacity)
 
-    def push(self, state, action, reward, next_state, done):
+    def push(self, state, action, reward, next_state, done) -> None:
+        """Store a transition."""
         self.buffer.append((state, action, reward, next_state, done))
 
-    def sample(self, batch_size: int):
+    def sample(self, batch_size: int) -> tuple:
+        """Return a random batch as numpy arrays."""
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         return (
@@ -63,21 +50,23 @@ class ReplayBuffer:
             np.array(dones, dtype=np.float32),
         )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.buffer)
 
 
 # ── DQL Agent ─────────────────────────────────────────────────────────────────
 
 class DQLAgent:
+    """Double DQN agent with experience replay and epsilon-greedy exploration."""
+
     def __init__(self):
         self.memory = ReplayBuffer(MEMORY_SIZE)
         self.epsilon = EPSILON_START
-
         self.grad_updates = 0
         self.step_count = 0
+        self.huber = tf.keras.losses.Huber()
 
-        # Resume from a saved model if one exists
+        # Resume from checkpoint if available
         saved = load_model(ONLINE_MODEL_PATH)
         if saved is not None:
             self.online_model = saved
@@ -90,76 +79,72 @@ class DQLAgent:
         self.target_model.set_weights(self.online_model.get_weights())
 
     def act(self, state: np.ndarray) -> int:
-        """
-        Pick an action for the given state.
-        Random action if exploring, best known action if exploiting.
-        """
+        """Pick an action: random (explore) or best Q-value (exploit)."""
         if random.random() < self.epsilon:
-            return random.randint(0, ACTION_SIZE - 1)  # explore
+            return random.randint(0, ACTION_SIZE - 1)
         q_values = self.online_model(state[np.newaxis], training=False).numpy()[0]
-        return int(np.argmax(q_values))  # exploit — pick highest Q-value
-
-    def remember(self, state, action, reward, next_state, done):
-        """Save a transition to memory."""
-        self.memory.push(state, action, reward, next_state, done)
+        return int(np.argmax(q_values))
 
     def step(self, state, action, reward, next_state, done) -> float:
         """
-        Called every game step. Stores the transition, decays epsilon,
-        and every LEARN_EVERY steps runs a training batch.
-
-        Returns the loss (0.0 if no training happened this step).
+        Store transition, decay epsilon, and train every LEARN_EVERY steps.
+        Returns loss (0.0 if no training happened).
         """
-        self.remember(state, action, reward, next_state, done)
+        self.memory.push(state, action, reward, next_state, done)
         self.step_count += 1
-        self.decay_epsilon()
+        self.epsilon = max(EPSILON_MIN, self.epsilon * EPSILON_DECAY)
 
         if self.step_count % LEARN_EVERY != 0:
             return 0.0
-
         return self.learn()
 
     def learn(self) -> float:
         """
-        Sample a batch from memory and update the network.
+        Sample a batch and run one Double DQN update.
 
-        For each transition in the batch:
-          - Compute the Q-target: reward + γ × best future Q-value
-            (for terminal states — death/starvation — there's no future,
-             so the target is just the reward)
-          - Replace the network's prediction for the chosen action with
-            this target, leave the other two actions unchanged
-          - Run one round of backprop to push predictions toward targets
-        
-        Returns the loss (how wrong the predictions were on average).
-        Returns 0.0 if the buffer doesn't have enough transitions yet.
+        Uses the online network to pick the best next action,
+        and the target network to evaluate it. This reduces
+        overestimation of Q-values.
+
+        Returns loss, or 0.0 if not enough memory yet.
         """
         if len(self.memory) < BATCH_SIZE:
             return 0.0
 
         states, actions, rewards, next_states, dones = self.memory.sample(BATCH_SIZE)
-        best_actions = np.argmax(self.online_model(next_states, training=False).numpy(), axis=1)
+
+        # Double DQN: online picks action, target evaluates it
+        best_actions = np.argmax(
+            self.online_model(next_states, training=False).numpy(), axis=1
+        )
         next_q = self.target_model(next_states, training=False).numpy()
         targets = rewards + GAMMA * next_q[np.arange(BATCH_SIZE), best_actions] * (1 - dones)
-        predicted_q_values = self.online_model(states, training=False).numpy()
-        target_q_values = predicted_q_values.copy()
-        target_q_values[np.arange(BATCH_SIZE), actions] = targets
 
-        history = self.online_model.fit(
-            states, target_q_values,
-            batch_size=BATCH_SIZE,
-            epochs=1, verbose=0,
-        )
+        # Build full target Q-value array (only overwrite the chosen action)
+        target_q = self.online_model(states, training=False).numpy()
+        target_q[np.arange(BATCH_SIZE), actions] = targets
+
+        loss = self._train_step(tf.constant(states), tf.constant(target_q))
 
         self.grad_updates += 1
-        if self.grad_updates % 100 == 0:
+        if self.grad_updates % SYNC_TARGET_EVERY == 0:
             self.target_model.set_weights(self.online_model.get_weights())
 
-        return float(history.history["loss"][0])
+        return float(loss)
 
-    def decay_epsilon(self):
-        self.epsilon = max(EPSILON_MIN, self.epsilon * EPSILON_DECAY)
+    @tf.function
+    def _train_step(self, states, target_q_values):
+        """Single gradient update (compiled once by tf.function)."""
+        with tf.GradientTape() as tape:
+            predictions = self.online_model(states, training=True)
+            loss = self.huber(target_q_values, predictions)
+        grads = tape.gradient(loss, self.online_model.trainable_variables)
+        self.online_model.optimizer.apply_gradients(
+            zip(grads, self.online_model.trainable_variables)
+        )
+        return loss
 
-    def save(self, path: str = ONLINE_MODEL_PATH):
+    def save(self, path: str = ONLINE_MODEL_PATH) -> None:
+        """Save both models to disk."""
         save_model(self.online_model, path)
         save_model(self.target_model, TARGET_ONLINE_MODEL_PATH)
