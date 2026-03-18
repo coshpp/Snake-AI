@@ -47,13 +47,14 @@ Trained with Huber loss and Adam optimizer. A `@tf.function`-compiled training s
 
 | Parameter | Value | Why |
 |-----------|-------|-----|
-| γ (discount) | 0.99 | High discount so the agent values long-term survival. A death 40 steps away still has significant impact. |
-| Batch size | 128 | Large enough for stable gradients, small enough for fast updates. |
+| Learning rate | 0.001 | Standard learning rate for Adam. |
+| γ (discount) | 0.99 | High discount so the agent values long-term survival. |
+| Batch size | 128 | Balances stable gradients with fast update speeds. |
 | Replay buffer | 100,000 | Stores diverse past transitions so the agent doesn't just learn from recent games. |
-| Learn every | 4 steps | Collects a few transitions between updates so training batches are more varied. |
+| Learn every | 4 steps | Executes a backward pass on a sampled batch every 4 steps. |
 | Target sync | Every 500 updates | Keeps the target network stable to prevent Q-value oscillation. Frequent enough to track improvement. |
-| ε decay | 0.99999/step | Slow decay gives ~460k steps of exploration before settling into exploitation. |
-| BFS cap | 150 cells | Limits flood fill cost at high scores. Tail search continues past the cap for accuracy. |
+| ε decay | 0.99999 per step | Slow decay gives ~460k steps of exploration before settling into exploitation. |
+
 
 ## Project Structure
 
@@ -72,7 +73,7 @@ visualizer.py — Training data visualization
 **Train:**
 ```bash
 python3 train.py              # default 20×20 grid
-python3 train.py <size>       # size×size grid
+python3 train.py size         # size×size grid
 ```
 
 Training saves checkpoints every 50 episodes. Ctrl+C saves and exits cleanly. Progress is logged to `training_log.csv`.
@@ -80,7 +81,7 @@ Training saves checkpoints every 50 episodes. Ctrl+C saves and exits cleanly. Pr
 **Watch the AI play:**
 ```bash
 python3 play_ai.py            # default 20x20 grid
-python3 play_ai.py <size>     # size×size grid
+python3 play_ai.py size       # size×size grid
 ```
 
 Use ↑/↓ to change speed, Space to pause and inspect Q-values, R to reset.
