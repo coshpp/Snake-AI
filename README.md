@@ -4,7 +4,7 @@ A Deep Q-Learning (DQL) agent that learns to play Snake through reinforcement le
 
 ## How It Works
 
-The agent uses a **Double Deep Q-Network (DQN) ** architecture: two neural networks (online and target) that work together to learn Q-values. Q-values are estimates of how good each action is in a given state. The online network picks actions and trains, while the target network provides stable training targets and syncs periodically.
+The agent uses a Double Deep Q-Network (DQN) architecture: two neural networks (online and target) that work together to learn Q-values. Q-values are estimates of how good each action is in a given state. The online network picks actions and trains, while the target network provides stable training targets and syncs periodically.
 
 **Epsilon-greedy exploration** balances learning: the agent starts fully random (ε = 1.0) and gradually shifts to exploiting its best known strategy (ε → 0.01) as it gains experience.
 
